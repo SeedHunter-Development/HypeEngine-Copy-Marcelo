@@ -1,0 +1,340 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #11152c;
+  --color-card: #1b2140;
+  --color-card-alt: #202655;
+  --color-cream: #fff5e7;
+  --color-orange: #fbac32;
+  --color-orange2: #f29236;
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+  --font-sans: "Nunito Sans", sans-serif;
+}
+
+:root {
+  --bg-body: #11152c;
+  --text-body: #fff5e7;
+  --bg-card: #1b2140;
+  --bg-card-glass: rgba(255, 255, 255, 0.04);
+  --border: rgba(255, 245, 231, 0.08);
+  --text-muted: rgba(255, 245, 231, 0.55);
+  --text-faint: rgba(255, 245, 231, 0.35);
+  --nav-bg: rgba(13, 17, 32, 0.96);
+  --input-bg: rgba(255, 255, 255, 0.06);
+  --input-border: rgba(255, 245, 231, 0.12);
+  --input-placeholder: rgba(255, 245, 231, 0.35);
+  --btn-secondary-bg: rgba(255, 255, 255, 0.07);
+  --btn-secondary-border: rgba(255, 245, 231, 0.15);
+  --btn-secondary-color: #fff5e7;
+  --scrollbar-thumb: rgba(255, 245, 231, 0.15);
+  --progress-track: rgba(255, 255, 255, 0.08);
+  --gradient-orange: linear-gradient(135deg, #fbac32, #f29236);
+  --card-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  --cream-muted: rgba(255, 245, 231, 0.55);
+  --cream-faint: rgba(255, 245, 231, 0.3);
+  --border-subtle: rgba(255, 245, 231, 0.08);
+}
+
+[data-theme="light"] {
+  --bg-body: #eef0f8;
+  --text-body: #1a1f3c;
+  --bg-card: #ffffff;
+  --bg-card-glass: rgba(26, 31, 60, 0.04);
+  --border: rgba(26, 31, 60, 0.1);
+  --text-muted: rgba(26, 31, 60, 0.6);
+  --text-faint: rgba(26, 31, 60, 0.4);
+  --nav-bg: rgba(238, 240, 248, 0.96);
+  --input-bg: rgba(26, 31, 60, 0.05);
+  --input-border: rgba(26, 31, 60, 0.15);
+  --input-placeholder: rgba(26, 31, 60, 0.4);
+  --btn-secondary-bg: rgba(26, 31, 60, 0.07);
+  --btn-secondary-border: rgba(26, 31, 60, 0.18);
+  --btn-secondary-color: #1a1f3c;
+  --scrollbar-thumb: rgba(26, 31, 60, 0.2);
+  --progress-track: rgba(26, 31, 60, 0.08);
+  --card-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --cream-muted: rgba(26, 31, 60, 0.6);
+  --cream-faint: rgba(26, 31, 60, 0.35);
+  --border-subtle: rgba(26, 31, 60, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--bg-body);
+  color: var(--text-body);
+  font-family: "Nunito Sans", sans-serif;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+::selection {
+  background: rgba(251, 172, 50, 0.3);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #fbac32, #f29236);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, #fbac32 0%, #f29236 100%);
+}
+
+.card {
+  background: var(--bg-card-glass);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.card-elevated {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--card-shadow);
+}
+
+.input-field {
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  color: var(--text-body);
+  padding: 12px 16px;
+  font-size: 15px;
+  font-family: "Nunito Sans", sans-serif;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+select.input-field {
+  color-scheme: dark;
+}
+
+select.input-field option {
+  background-color: #1b2140;
+  color: #fff5e7;
+}
+
+[data-theme="light"] select.input-field {
+  color-scheme: light;
+}
+
+[data-theme="light"] select.input-field option {
+  background-color: #ffffff;
+  color: #1a1f3c;
+}
+
+.input-field:focus {
+  border-color: #fbac32;
+}
+
+.input-field::placeholder {
+  color: var(--input-placeholder);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #fbac32 0%, #f29236 100%);
+  color: #11152c;
+  font-weight: 700;
+  font-family: "Nunito Sans", sans-serif;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 24px;
+  font-size: 15px;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-primary:hover {
+  opacity: 0.92;
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: var(--btn-secondary-bg);
+  color: var(--btn-secondary-color);
+  font-weight: 600;
+  font-family: "Nunito Sans", sans-serif;
+  border: 1px solid var(--btn-secondary-border);
+  border-radius: 12px;
+  padding: 14px 24px;
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-secondary:hover {
+  opacity: 0.85;
+}
+
+.btn-secondary:active {
+  transform: scale(0.98);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  font-family: "Nunito Sans", sans-serif;
+  border: none;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: color 0.2s, background 0.2s;
+}
+
+.btn-ghost:hover {
+  color: var(--text-body);
+  background: var(--bg-card-glass);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.badge-orange {
+  background: rgba(251, 172, 50, 0.15);
+  color: #fbac32;
+  border: 1px solid rgba(251, 172, 50, 0.3);
+}
+
+.badge-green {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.badge-gray {
+  background: var(--bg-card-glass);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.badge-trending {
+  background: rgba(251, 172, 50, 0.2);
+  color: #fbac32;
+  border: 1px solid rgba(251, 172, 50, 0.4);
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--progress-track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #fbac32, #f29236);
+  border-radius: 999px;
+  transition: width 0.6s ease;
+}
+
+.page-container {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 0 16px;
+  padding-bottom: 90px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.slide-up {
+  animation: slideUp 0.35s ease forwards;
+}

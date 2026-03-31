@@ -1,0 +1,79 @@
+PROMPT 6 OF 6: AI tweet generation with embedded tracking links
+CONTEXT:
+I have HypeEngine with the full matching system, tracking links, and conversion pixel. When a client creates a campaign, they provide postTemplates (up to 5 variations), ctaText, ctaPlacement, landingPageUrl, and aiPersonalization toggle. When a KOL gets booked, a tracking link is generated.
+
+PROBLEM: Tracking links and tweets are disconnected. KOLs have to manually insert links. Many will forget or use the wrong link, breaking attribution.
+
+WHAT I WANT: Every tweet a KOL sees should ALREADY have their unique tracking link embedded. Zero friction — they just copy and post.
+
+STEP 1 — TWEET GENERATOR:
+
+Create file: artifacts/hypeengine/lib/tracking/tweet-generator.ts
+
+Function: generatePersonalizedTweet(campaignId, kolProfileId): Promise<PersonalizedTweet>
+
+1. Load campaign (postTemplates, ctaText, ctaPlacement, hashtag, aiPersonalization)
+2. Load KOL's tracking link from tracking_links (generate if missing)
+3. Build tracking URL: https://[DOMAIN]/r/[refCode]
+
+4. If aiPersonalization is true:
+   - Call OpenAI to adapt the best template to the KOL's voice
+   - System prompt: "You are a tweet ghostwriter for crypto influencers. Rewrite the template to sound natural in the KOL's voice while keeping the core message. Stay under 250 characters (link added separately). Do NOT include URLs. Output ONLY tweet text."
+   - User prompt includes: template, KOL name, contentVerticals, primaryLanguage, bio, hashtag
+   - Then embed tracking link into the AI output
+
+5. If aiPersonalization is false:
+   - Pick best template for KOL (or use first one)
+   - Embed tracking link directly
+
+6. Link embedding:
+   IF ctaPlacement === "end_of_tweet": append "\n\n[ctaText] [trackingUrl]"
+   IF ctaPlacement === "replace_in_template": replace {link} with "[ctaText] [trackingUrl]"
+
+7. Append hashtag if not present
+8. Verify under 280 chars. If over: remove hashtag → shorten CTA to just URL → truncate text
+
+Return: { tweetText, trackingUrl, refCode, templateUsed, charCount }
+
+Also: generateAllTweetsForCampaign(campaignId): Promise<PersonalizedTweet[]>
+
+STEP 2 — AUTO-GENERATE ON BOOKING:
+
+When campaign_kol_match status changes to "booked":
+1. generateTrackingLink
+2. generatePersonalizedTweet
+3. Store in campaign_kol_matches.generatedTweetText and .originalTemplate
+
+STEP 3 — UPDATE KOL CAMPAIGN VIEW:
+
+Replace generic "Post Templates" with personalized "Your Tweet" section:
+
+a) Show ONE final tweet in a tweet-preview card with tracking link highlighted
+   - Character count below
+   - Note: "This tweet contains your unique tracking link. Do not remove it."
+
+b) "Edit" button → editable textarea
+   - Warning if tracking URL removed: "Your tracking link is missing. Clicks won't be tracked."
+   - Save edits to campaign_kol_matches.customTweetText
+
+c) "Regenerate" button → calls AI again with "Write a different variation"
+
+d) "Copy & Post" button:
+   - Copies tweet to clipboard
+   - Toast: "Tweet copied! Open Twitter to post."
+   - "Open Twitter" button → https://twitter.com/intent/tweet?text=[encoded_text]
+
+e) "I Already Posted" flow:
+   - KOL pastes tweet URL
+   - System verifies: tweet exists, posted by this handle, tracking link present
+   - If link missing: warning about no attribution
+   - If link present: green "Tweet verified — tracking active"
+   - Save post record with trackingLinkPresent boolean
+
+STEP 4 — VERIFICATION ON POST SUBMISSION:
+
+When a KOL submits via "I Already Posted":
+- Check if tracking URL (https://[DOMAIN]/r/[refCode]) exists in the tweet text
+- Set posts.trackingLinkPresent accordingly
+- Set posts.trackingLinkId to the matching tracking link
+- If link not present, still accept the post but flag it

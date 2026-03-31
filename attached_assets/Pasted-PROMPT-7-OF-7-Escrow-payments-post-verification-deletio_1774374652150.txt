@@ -1,0 +1,342 @@
+PROMPT 7 OF 7: Escrow payments, post verification, deletion tracking + pricing impact
+CONTEXT:
+I have HypeEngine with PostgreSQL + Drizzle ORM. KOLs get matched to campaigns, receive AI-generated tweets with tracking links, and post them on Twitter. The system tracks clicks and conversions via the tracking pixel. Delivery scoring and the feedback loop already exist from previous prompts.
+
+PROBLEM: Currently, when a KOL posts a tweet, credits are transferred immediately. There's no verification that the tweet stays live. KOLs can post, collect payment, then delete the tweet — destroying the campaign value. I need an escrow system with automated verification checks.
+
+THE PAYMENT MODEL:
+- Credits go into ESCROW when a KOL submits their post (not into the KOL's balance)
+- System runs 4 automated checks at: 1 hour, 24 hours, 72 hours, and 7 days
+- Each check scrapes the tweet URL to confirm it's still live and the tracking link is still present
+- If the tweet survives all 4 checks: FULL payout released to KOL's balance, immediately withdrawable
+- If the tweet is deleted OR the tracking link is removed at ANY point before day 7: FULL escrow returned to campaign budget, KOL gets nothing
+- No partial payments. It's all or nothing.
+- Deletion history is tracked on the KOL's profile and affects future matching, pricing, and visibility
+
+DO NOT implement any account suspension detection or grace periods — keep it simple for MVP.
+
+===========================================================
+STEP 1 — NEW DATABASE TABLE + SCHEMA CHANGES
+===========================================================
+
+Add new table to lib/db/src/schema/index.ts:
+
+TABLE "post_verifications":
+- id: uuid, primary key, defaultRandom()
+- postId: uuid, references posts.id, not null
+- campaignId: uuid, references campaigns.id, not null
+- kolProfileId: uuid, references kol_profiles.id, not null
+- tweetUrl: text, not null
+- escrowAmount: integer, not null (credits held in escrow for this post)
+- status: text, default "verifying" — "verifying", "passed", "failed"
+- check1hAt: timestamp (when the 1h check is scheduled)
+- check1hResult: text — "live", "deleted", "link_removed", or null (not yet checked)
+- check1hEngagement: jsonb — {likes, retweets, replies, views} snapshot
+- check24hAt: timestamp
+- check24hResult: text
+- check24hEngagement: jsonb
+- check72hAt: timestamp
+- check72hResult: text
+- check72hEngagement: jsonb
+- check7dAt: timestamp
+- check7dResult: text
+- check7dEngagement: jsonb
+- paidOutAt: timestamp (when credits were released to KOL — null until payout)
+- failedAt: timestamp (when verification failed — null if still verifying or passed)
+- failureReason: text — "deleted_1h", "deleted_24h", "deleted_72h", "deleted_7d", "link_removed_24h", "link_removed_72h", "link_removed_7d"
+- createdAt: timestamp, defaultNow()
+
+Add these fields to the "kol_profiles" table (ADD, don't replace existing fields):
+- totalPostsVerified: integer, default 0
+- totalPostsDeleted: integer, default 0
+- postPayoutDeletions: integer, default 0 (deleted AFTER 7-day payout)
+- postReliabilityRate: real, default 1.0 (totalPostsVerified / total attempts, starts at 100%)
+
+Add a new field to the "posts" table:
+- escrowStatus: text, default "none" — "none", "held", "released", "returned"
+
+Run drizzle-kit push to apply schema changes.
+
+===========================================================
+STEP 2 — ESCROW LOGIC
+===========================================================
+
+Create file: artifacts/hypeengine/lib/payments/escrow.ts
+
+Function: createEscrow(postId: string): Promise<PostVerification>
+
+Called when a KOL submits a post ("I Already Posted" or "Post Now"):
+1. Load the post, campaign, and campaign_kol_match to get the agreed price
+2. Calculate escrowAmount from the match's priceAgreed (or calculate via calculateKolPrice if not set)
+3. Verify the campaign has enough remaining budget (credits - usedCredits >= escrowAmount)
+4. Deduct escrowAmount from campaign's usedCredits (reserve it)
+5. Set post.escrowStatus to "held"
+6. Create a post_verifications row with:
+   - escrowAmount
+   - status = "verifying"
+   - check1hAt = now + 1 hour
+   - check24hAt = now + 24 hours
+   - check72hAt = now + 72 hours
+   - check7dAt = now + 7 days
+   - All result fields = null
+7. Create a transaction record: type "spend", description "Escrow held for post by @[handle]"
+8. Return the verification record
+
+DO NOT transfer any credits to the KOL's balance at this point.
+
+Function: releaseEscrow(verificationId: string): Promise<void>
+
+Called when all 4 checks pass:
+1. Load the post_verification
+2. Add escrowAmount to the KOL's user.credits balance
+3. Set post.escrowStatus to "released"
+4. Set post_verification.status to "passed"
+5. Set post_verification.paidOutAt to now()
+6. Update kol_profiles.totalPostsVerified += 1
+7. Recalculate kol_profiles.postReliabilityRate
+8. Create a transaction record: type "earn", description "Payout for verified post on [campaign title]"
+
+Function: returnEscrow(verificationId: string, reason: string): Promise<void>
+
+Called when any check fails:
+1. Load the post_verification
+2. Return escrowAmount to campaign budget (subtract from usedCredits)
+3. Set post.escrowStatus to "returned"
+4. Set post_verification.status to "failed"
+5. Set post_verification.failedAt to now()
+6. Set post_verification.failureReason to reason
+7. Update kol_profiles.totalPostsDeleted += 1
+8. Recalculate kol_profiles.postReliabilityRate
+9. Create a transaction record: type "deposit", description "Escrow returned — post deleted/modified by @[handle]"
+
+===========================================================
+STEP 3 — VERIFICATION CHECKER
+===========================================================
+
+Create file: artifacts/hypeengine/lib/payments/verification.ts
+
+Function: verifyPost(verificationId: string, checkType: "1h" | "24h" | "72h" | "7d"): Promise<VerificationResult>
+
+This function:
+1. Load the post_verification record
+2. If status is already "failed", skip (don't re-check failed posts)
+3. Use Apify to scrape the tweet URL:
+   - Check if the tweet exists (returns content vs 404/not found)
+   - If tweet exists, extract current engagement metrics (likes, retweets, replies, views)
+   - Check if the tracking link URL (https://[DOMAIN]/r/[refCode]) is still present in the tweet text
+4. Determine result:
+   - Tweet exists AND tracking link present → result = "live"
+   - Tweet does not exist / returns 404 → result = "deleted"
+   - Tweet exists BUT tracking link is missing from text → result = "link_removed"
+5. Store the result and engagement snapshot in the appropriate check fields:
+   - If checkType is "1h": set check1hResult and check1hEngagement
+   - If checkType is "24h": set check24hResult and check24hEngagement
+   - etc.
+6. If result is "deleted" or "link_removed":
+   - Call returnEscrow(verificationId, `${result}_${checkType}`)
+   - Return { passed: false, reason }
+7. If result is "live" AND checkType is "7d":
+   - This is the final check — ALL 4 checks passed
+   - Call releaseEscrow(verificationId)
+   - Return { passed: true, paidOut: true }
+8. If result is "live" AND checkType is NOT "7d":
+   - Return { passed: true, paidOut: false, nextCheck: next check type }
+
+IMPORTANT: If the Apify scrape fails (API error, timeout, etc.), do NOT treat it as a deletion. Retry once after 5 minutes. If retry also fails, skip this check and try again at the next checkpoint. Log the error. Never penalize a KOL for your system's scraping failure.
+
+Function: runPendingVerifications(): Promise<VerificationSummary>
+
+This is the batch processor that runs all due checks:
+1. Query post_verifications where status = "verifying"
+2. For each, determine which checks are due (where check timestamp <= now AND result is null)
+3. Run checks in order (1h first, then 24h, etc.) — never skip ahead
+4. Process sequentially with 1-second delay between each (respect Apify rate limits)
+5. Return summary: { checked, passed, failed, errors }
+
+===========================================================
+STEP 4 — API ENDPOINTS
+===========================================================
+
+POST /api/admin/verify
+→ Calls runPendingVerifications()
+→ Returns { checked, passed, failed, errors }
+→ This should be called every 30 minutes by an external cron service (cron-job.org)
+→ The endpoint figures out which checks are due based on timestamps — safe to call frequently
+
+GET /api/posts/[postId]/verification
+→ Returns the post_verification record for this post
+→ Include: current status, which checks have passed, engagement snapshots, escrow amount, payout status
+→ Accessible by the post's KOL and the campaign's client
+
+===========================================================
+STEP 5 — UPDATE POST SUBMISSION FLOW
+===========================================================
+
+Modify the existing post submission logic (both "Post Now" and "I Already Posted" flows):
+
+CURRENT: When KOL submits a post, credits are transferred immediately to their balance
+NEW: When KOL submits a post:
+1. Verify the tweet (exists + tracking link present) — this is the initial check, not the 1h check
+2. If verification passes, call createEscrow(postId)
+3. Set post.status to "pending_verification" (add this new status option)
+4. Show the KOL a confirmation: "Your post has been submitted. Credits are held in escrow and will be released to your balance after 7 days of verification. You'll receive a notification when your payment is confirmed."
+5. If initial verification fails (tweet doesn't exist or tracking link missing), reject the submission with an error message
+
+NEVER transfer credits directly to KOL balance on post submission anymore. All payments go through escrow.
+
+===========================================================
+STEP 6 — KOL-FACING VERIFICATION UI
+===========================================================
+
+On the KOL's campaign detail page (where they see their posted tweets), show a verification timeline for each post:
+
+A visual progress tracker showing the 4 checkpoints:
+- Each checkpoint shows: scheduled time, status (pending/passed/failed), and engagement snapshot if available
+- Use icons or colored dots: gray = pending, green = passed, red = failed
+- Show the escrow amount prominently: "150 credits in escrow"
+- If all 4 passed: show "Verified — 150 credits added to your balance" in green with a checkmark
+- If any check failed: show "Verification failed — post was deleted/modified at [time]. Escrow returned to campaign." in red
+
+On the KOL dashboard:
+- Show "Credits in escrow: X" separate from "Credits available: Y" in their balance display
+- Credits in escrow should be visually distinct (e.g., yellow/amber color vs green for available)
+- Show a small "Pending verifications: N posts" indicator if they have posts currently in the 7-day window
+
+On the KOL profile (visible to clients):
+- Show "Post reliability: X%" based on postReliabilityRate
+- If below 90%, show in yellow. If below 70%, show in red.
+
+===========================================================
+STEP 7 — CLIENT-FACING VERIFICATION UI
+===========================================================
+
+On the campaign detail page (client side), in the KOL Performance Breakdown:
+- For each KOL's post, show the verification status inline:
+  - "Verifying (check 2/4 passed)" with a progress bar
+  - "Verified — paid" in green
+  - "Failed — escrow returned" in red with the reason
+- Show total credits in escrow vs total credits paid out vs total credits returned for the campaign
+
+This gives the client full transparency: they can see that their budget is protected and that the system is actively verifying posts.
+
+===========================================================
+STEP 8 — DELETION IMPACT ON MATCHING + PRICING
+===========================================================
+
+Modify artifacts/hypeengine/lib/matching/engine.ts:
+
+Add postReliabilityRate as a new dimension in the matching algorithm for ALL campaign goal types:
+
+For CONVERSION campaigns: add "postReliability" with weight 3
+For AWARENESS campaigns: add "postReliability" with weight 2
+For COMMUNITY campaigns: add "postReliability" with weight 2
+
+Score calculation: postReliabilityRate directly (it's already 0-1).
+- 1.0 (100% reliable) = full score
+- 0.9 (90%) = 0.9 score
+- Below 0.7 = significant penalty
+
+If a KOL has fewer than 3 completed posts, use score 0.8 (slight uncertainty discount) instead of their actual rate.
+
+Modify artifacts/hypeengine/lib/matching/pricing.ts:
+
+Add a RELIABILITY DISCOUNT to the pricing formula:
+
+CURRENT: price = base × followerTier × performance × matchModifier
+NEW: price = base × followerTier × performance × matchModifier × reliabilityModifier
+
+reliabilityModifier calculation:
+- postReliabilityRate >= 0.95: reliabilityModifier = 1.0 (no discount — trustworthy)
+- postReliabilityRate 0.85-0.95: reliabilityModifier = 0.9 (10% discount)
+- postReliabilityRate 0.70-0.85: reliabilityModifier = 0.75 (25% discount)
+- postReliabilityRate below 0.70: reliabilityModifier = 0.5 (50% discount — high risk KOL)
+
+Show this in the price breakdown on the KOL recommendation card:
+- If reliabilityModifier < 1.0, show "Reliability discount: -X%" in the breakdown
+- This signals to the client that this KOL has a history of deleting posts and is priced accordingly
+
+===========================================================
+STEP 9 — POST-PAYOUT DELETION TRACKING
+===========================================================
+
+Even after the 7-day payout, you want to know if KOLs habitually delete campaign posts once they've been paid. No clawback, but it affects their reputation.
+
+Create function: spotCheckPaidPosts(): Promise<SpotCheckResult>
+
+This function:
+1. Query posts where escrowStatus = "released" AND createdAt is between 8 and 30 days ago
+2. Randomly sample 20% of these posts
+3. For each sampled post, scrape the tweet URL via Apify
+4. If the tweet no longer exists:
+   - Update kol_profiles.postPayoutDeletions += 1
+   - Recalculate postReliabilityRate to include post-payout deletions:
+     postReliabilityRate = totalPostsVerified / (totalPostsVerified + totalPostsDeleted + postPayoutDeletions)
+   - Log: "Post-payout deletion detected: @handle deleted tweet [url] on campaign [title]"
+5. Return summary of spot check results
+
+API endpoint: POST /api/admin/spot-check
+→ Calls spotCheckPaidPosts()
+→ Run weekly via cron (less critical than the verification checks)
+
+===========================================================
+STEP 10 — NOTIFICATION SYSTEM FOR VERIFICATION EVENTS
+===========================================================
+
+Add in-app notifications for key verification events. Create a simple notification system:
+
+Add table "notifications":
+- id: uuid, primary key, defaultRandom()
+- userId: uuid, references users.id, not null
+- type: text — "verification_passed", "verification_failed", "payout_released", "escrow_returned"
+- title: text
+- message: text
+- read: boolean, default false
+- metadata: jsonb (postId, campaignId, etc.)
+- createdAt: timestamp, defaultNow()
+
+Trigger notifications at these events:
+
+FOR KOLs:
+- When each check passes: "Check [N]/4 passed for your post on [campaign]. [N-1] checks remaining."
+- When final check passes + payout: "Your post on [campaign] has been verified. [X] credits added to your balance."
+- When any check fails: "Your post on [campaign] was detected as deleted/modified. Escrow of [X] credits has been returned to the campaign."
+
+FOR CLIENTS:
+- When a KOL's post fails verification: "A post by @[handle] on your campaign [title] was deleted. [X] credits have been returned to your budget."
+- When all posts in a campaign are verified: "All KOL posts for [campaign] have completed verification."
+
+Show notifications:
+- Add a notification bell icon in the top navigation bar (both client and KOL layouts)
+- Click opens a dropdown with unread notifications
+- Each notification is clickable and links to the relevant post or campaign
+- Show unread count as a badge on the bell icon
+
+API endpoints:
+GET /api/notifications?userId=[id] → list notifications for user
+PATCH /api/notifications/[id] → mark as read
+PATCH /api/notifications/read-all?userId=[id] → mark all as read
+
+===========================================================
+STEP 11 — UPDATE DELIVERY SCORING
+===========================================================
+
+Modify artifacts/hypeengine/lib/analytics/delivery-score.ts:
+
+When computing the delivery score for a KOL after campaign completion, use the engagement snapshots from post_verifications instead of re-scraping:
+- check1hEngagement gives you initial viral spread
+- check24hEngagement gives you peak engagement
+- check72hEngagement gives you sustained engagement
+- check7dEngagement gives you final numbers
+
+This is better than a single scrape because you have the GROWTH CURVE:
+- engagementGrowthRate = (check72hEngagement.likes - check1hEngagement.likes) / check1hEngagement.likes
+- A post that gets 80% of its engagement in the first hour might be bot-boosted
+- A post that grows steadily over 72h has genuine organic reach
+- Factor this into the engagement delivery score as a quality signal
+
+Add a new sub-dimension to delivery scoring:
+ENGAGEMENT GROWTH PATTERN (weight 0.10, taken from existing engagement delivery weight which becomes 0.15):
+- Calculate what % of total engagement arrived after the first hour
+- Healthy: 40-70% of engagement comes after hour 1 (organic spread)
+- Suspicious: >90% in first hour then flat (possible bot boost)
+- Score: 1.0 for healthy growth pattern, 0.3 for suspicious front-loading

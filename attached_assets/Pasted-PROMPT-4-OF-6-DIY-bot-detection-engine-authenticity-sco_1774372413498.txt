@@ -1,0 +1,82 @@
+PROMPT 4 OF 6: DIY bot detection engine + authenticity scoring
+CONTEXT:
+I have HypeEngine with PostgreSQL + Drizzle. The data pipeline from Prompt 3 fills kol_profiles with engagement data, reply quality scores, and follower sample data. Now I need the composite authenticity score from 5 independent bot detection signals.
+
+Fields ready to be filled: engRateFlag, consistencyFlag, replyQualityFlag, followerSampleFlag, authenticityScore.
+Table kol_follower_snapshots was already created in Prompt 1.
+
+TASK: Build the 5-signal bot detection engine.
+
+STEP 1 — BOT DETECTION ENGINE:
+
+Create file: artifacts/hypeengine/lib/matching/authenticity.ts
+
+Function: computeAuthenticityScore(kolProfileId: string): Promise<AuthenticityResult>
+
+5 signals, each normalized to 0-1 (1 = healthy, 0 = likely botted):
+
+SIGNAL 1 — Engagement rate anomaly (weight 0.20):
+- Healthy ranges by follower tier:
+  <10K: 2-8%, 10K-100K: 1-5%, 100K-1M: 0.5-3%, >1M: 0.3-2%
+- Score 1.0 if within range, scale down linearly below minimum
+- Penalize if suspiciously HIGH (>15%) — possible engagement pods
+- If null, score = 0.5
+
+SIGNAL 2 — Engagement consistency (weight 0.15):
+- Healthy CV: 0.4 to 1.5
+- Below 0.3 = suspiciously uniform → score drops to 0
+- Above 2.0 = one viral hit → score drops to 0.3
+- Smooth transition at boundaries
+- If null, score = 0.5
+
+SIGNAL 3 — Reply quality (weight 0.30):
+- replyQualityScore / 100
+- HIGHEST weight — genuine replies nearly impossible to fake
+- If null, score = 0.5 and weight becomes 0.15
+
+SIGNAL 4 — Follower sample audit (weight 0.20):
+- followerSampleFlag (avg bot score 0-5):
+  0-1.0 → authenticity 1.0
+  1.0-2.0 → 0.7
+  2.0-3.0 → 0.4
+  3.0+ → 0.1
+- Linear interpolation between breakpoints
+- If null, score = 0.5 and weight becomes 0.10
+
+SIGNAL 5 — Growth pattern (weight 0.15):
+- Load last 30 days of kol_follower_snapshots
+- If fewer than 7 snapshots: score = 0.5, weight = 0.075
+- Calculate daily growth, find days where growth > 3x average
+- 0 spike days → 1.0, 1 spike → 0.7, 2-3 spikes → 0.4, 4+ → 0.1
+
+COMPOSITE:
+authenticityScore = (Σ signal × weight) / (Σ active weights) × 100
+
+Return: { authenticityScore, engRateFlag, consistencyFlag, replyQualityFlag, followerSampleFlag, growthPatternFlag, details: "human-readable summary" }
+
+STEP 2 — INTEGRATE INTO ENRICHMENT PIPELINE:
+
+Modify artifacts/hypeengine/lib/data-pipeline/enrich.ts:
+→ After updating enriched fields, call computeAuthenticityScore
+→ Update kol_profile with authenticity fields
+
+STEP 3 — DAILY FOLLOWER SNAPSHOT:
+
+Create file: artifacts/hypeengine/lib/data-pipeline/snapshot.ts
+
+Function: takeFollowerSnapshots(): Promise<void>
+- For each kol_profile, insert snapshot with current twitterFollowers and today's date
+- ON CONFLICT DO NOTHING if today's snapshot exists
+
+API route: POST /api/admin/snapshots → calls takeFollowerSnapshots
+
+STEP 4 — AUTHENTICITY UI:
+
+On KOL profile modal/page, add "Authenticity" section:
+- authenticityScore as large number (green >75, yellow 50-75, red <50)
+- 5 signal breakdown as small horizontal bars
+- Short text summary
+
+On KOL recommendation list, show authenticity as small badge next to match score.
+
+Match existing dark-themed UI.

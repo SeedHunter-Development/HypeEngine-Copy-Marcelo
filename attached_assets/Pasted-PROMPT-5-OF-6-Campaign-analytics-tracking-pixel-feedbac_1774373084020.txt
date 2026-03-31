@@ -1,0 +1,131 @@
+PROMPT 5 OF 6: Campaign analytics, tracking pixel, feedback loop + pricing
+CONTEXT:
+I have HypeEngine with PostgreSQL + Drizzle. All tracking tables exist (tracking_links, tracking_clicks, tracking_conversions, campaign_results, kol_campaign_scores). KOLs get matched to campaigns and post tweets with UTM referral links. I need the complete measurement and feedback loop.
+
+IMPORTANT: Only implement the JavaScript pixel approach for conversion tracking. Do NOT implement server-to-server postback.
+
+TASK: Build tracking, analytics, delivery scoring, and feedback loop.
+
+STEP 1 — REFERRAL LINK GENERATION:
+
+Create file: artifacts/hypeengine/lib/tracking/links.ts
+
+Function: generateTrackingLink(campaignId, kolProfileId, matchId, destinationUrl): Promise<TrackingLink>
+1. Generate short unique refCode (8 alphanumeric, e.g. "he_a7x9k2"), check collisions
+2. Insert into tracking_links
+3. Return full URL: https://[YOUR_DOMAIN]/r/[refCode]
+
+Auto-generate when campaign_kol_match status changes to "booked".
+
+STEP 2 — CLICK TRACKING REDIRECT:
+
+Create: GET /r/[refCode] (in artifacts/hypeengine/app/r/[refCode]/route.ts)
+1. Look up tracking_link by refCode
+2. Insert tracking_click (hashed IP, user agent, referer) — async, fire and forget
+3. Set cookie: "he_ref=[refCode]", 30-day expiry, SameSite=None, Secure
+4. 302 redirect to destinationUrl with ?he_ref=[refCode] appended
+5. Must be FAST — under 50ms
+
+STEP 3 — JAVASCRIPT TRACKING PIXEL:
+
+Create: GET /api/track/pixel.js (serves JS snippet, <2KB)
+
+The pixel:
+1. Reads "he_ref" cookie OR "he_ref" URL parameter
+2. Exposes: window.HypeEngine.trackConversion(eventType, eventValue, metadata)
+3. When called, POSTs to /api/track/conversion: { refCode, eventType, eventValue, metadata }
+4. Auto-fires "pageview" on load if he_ref present
+
+Create: POST /api/track/conversion
+1. Accepts { refCode, eventType, eventValue, metadata }
+2. Looks up tracking_link → get kolProfileId and campaignId
+3. Inserts tracking_conversion
+4. Returns { success: true }
+5. CORS headers: Access-Control-Allow-Origin: *
+
+Client integration (show in dashboard):
+<script src="https://[DOMAIN]/api/track/pixel.js"></script>
+<script>HypeEngine.trackConversion('signup');</script>
+
+STEP 4 — REAL-TIME ANALYTICS DASHBOARD:
+
+On campaign detail page, add "Campaign Performance" section:
+- Total clicks (unique in parentheses)
+- Total conversions by event type
+- CTR, conversion rate, CPA
+- Total conversion value
+
+Add "KOL Performance Breakdown" table:
+- Per KOL: name, handle, referral link (copiable), clicks, conversions, conv rate, CPA, performance bar
+
+STEP 5 — TRACKING SETUP PAGE:
+
+On campaign detail page (after launch), add "Tracking Setup" section:
+- Show the <script> tag for the client's conversion page with copy button
+- Show example conversion call code
+- "Test pixel" button
+- Pixel status indicator: green/yellow/red based on data received
+- Live event log showing last 10 tracking events
+
+STEP 6 — CAMPAIGN COMPLETION + DELIVERY SCORING:
+
+Create file: artifacts/hypeengine/lib/analytics/delivery-score.ts
+
+Function: scoreCampaignDelivery(campaignId): Promise<void>
+
+For EACH participating KOL:
+a) Scrape their campaign tweet via Apify (likes, retweets, replies, views)
+b) Score 6 dimensions (each 0-1):
+   - ENGAGEMENT DELIVERY (weight 0.25): actual engagement / expected (from KOL's avgLikes), capped at 1.5x
+   - REPLY QUALITY (weight 0.15): LLM analysis of campaign tweet replies
+   - CONTENT COMPLIANCE (weight 0.10): LLM check — did tweet match brief?
+   - CTR (weight 0.20): clicks / views. 10% CTR = perfect score.
+   - CONVERSION RATE (weight 0.20): conversions / unique clicks. 5% = perfect. If goal ≠ "conversion", redistribute to engagement (0.45) and CTR (0.30)
+   - CLIENT SATISFACTION (weight 0.10): rating / 5. If no rating, 0.5 at half weight.
+c) deliveryScore = weighted sum × 100
+d) Save to kol_campaign_scores
+
+Compute campaign-level aggregates in campaign_results.
+
+STEP 7 — FEEDBACK LOOP:
+
+Create file: artifacts/hypeengine/lib/analytics/feedback-loop.ts
+
+Function: updateKolProfileFromCampaignHistory(kolProfileId): Promise<void>
+
+Recalculates from ALL completed campaigns (recent weighted 2x):
+- avgCpaByGoal: grouped by campaign goal type
+- convRateByVertical: grouped by targetNiches
+- clientSatisfaction: weighted rolling average
+- campaignsCompleted: count
+- priceCompetitiveness: compare CPA to similar KOLs in same tier
+
+Auto-called when scoreCampaignDelivery completes.
+
+STEP 8 — CAMPAIGN COMPLETION FLOW UI:
+
+Add "Complete Campaign" button on campaign detail page (visible when active).
+
+On click:
+1. Confirmation modal
+2. Per-KOL review form: clicks/conversions shown, 1-5 star rating, optional feedback
+3. After reviews: call scoreCampaignDelivery + updateKolProfileFromCampaignHistory
+4. Show summary: total spend, conversions, CPA, best/worst KOL
+
+Auto-prompt completion when credits exhausted.
+
+STEP 9 — KOL PERFORMANCE VIEW:
+
+On KOL dashboard/profile, add "Performance History":
+- Overall delivery score (large, colored)
+- Performance multiplier explanation: "1.15x — you earn 15% above base"
+- Past campaigns: name, score, clicks, conversions, earnings, client rating
+- Transparency tooltip explaining how performance affects pricing
+
+STEP 10 — UPDATE MATCHING ENGINE:
+
+Modify artifacts/hypeengine/lib/matching/engine.ts:
+- historicalCpa dimension now uses REAL data from avgCpaByGoal
+- Add clientSatisfaction boost/penalty: >4.0 adds 5% to match score, <2.5 subtracts 10%
+- Show performance-based price (from calculateKolPrice) in recommendation list instead of simple formula
+- Allow sorting by "Best value" (price/matchScore ratio)

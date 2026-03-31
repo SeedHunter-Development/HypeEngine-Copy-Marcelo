@@ -1,0 +1,154 @@
+PROMPT 2 OF 6: Matching algorithm + recommendation API + client UI
+CONTEXT:
+I have a Next.js 15 app called HypeEngine with a PostgreSQL database using Drizzle ORM. The database has 12 tables including: users, kol_profiles, campaigns, campaign_kol_matches, posts, transactions, tracking_links, and more.
+
+The kol_profiles table has 43+ data fields covering: identity/profile, content fingerprint, engagement quality, audience composition, crypto credibility, authenticity scoring, and campaign performance history.
+
+The campaigns table has a "campaignGoal" field with values "conversion", "awareness", or "community".
+
+Currently, after a client creates a campaign, they see NO KOL recommendations — they just wait passively for KOLs to find them. I need to change this by adding an intelligent matching system.
+
+IMPORTANT CONSTRAINTS:
+- Match the existing UI design style (Tailwind CSS v4, dark theme, card-based layout with the existing color palette and Framer Motion animations)
+- Do NOT break any existing KOL-side flows (KOLs should still be able to browse and post to campaigns)
+
+TASK: Build the matching algorithm, API endpoints, and client-facing UI to recommend the best KOLs for each campaign.
+
+STEP 1 — MATCHING ENGINE:
+
+Create file: artifacts/hypeengine/lib/matching/engine.ts
+
+Export an async function: matchKolsToCampaign(campaignId: string): Promise<MatchResult[]>
+
+The function must:
+1. Load the campaign from the database (including campaignGoal, targetCountry, targetLanguage, targetNiches, maxPricePerPost)
+2. Load ALL kol_profiles joined with their user data
+3. Score each KOL against the campaign using weighted dimensions that change based on the campaignGoal
+4. Save the top 50 results into campaign_kol_matches table
+5. Return the ranked results
+
+SCORING WEIGHTS BY CAMPAIGN GOAL:
+
+--- CONVERSION campaigns ---
+- audienceGeoMatch: weight 5 → compare replyLangDist + followerSampleGeo against campaign targetCountry. If targetCountry is "CN" and KOL's replyLangDist has {"zh": 0.7}, score = 0.7
+- audienceLangMatch: weight 5 → compare primaryLanguage + replyLangDist against targetLanguage
+- verticalMatch: weight 4 → Jaccard similarity between KOL's top contentVerticals keys and campaign targetNiches
+- replyQuality: weight 4 → replyQualityScore normalized to 0-1 (divide by 100)
+- historicalCpa: weight 5 → if avgCpaByGoal.conversion exists and is low, score high (inverse normalize: best CPA gets 1.0). If no data, use 0.5 and halve the weight to 2.5
+- authenticity: weight 4 → authenticityScore / 100
+- cryptoCredibility: weight 3 → twitterScoreValue normalized via min-max across all KOLs
+- engagementRate: weight 3 → engagementRate normalized via min-max, cap outliers at 95th percentile
+- threadDepth: weight 3 → average of threadFrequency and originalVsRtRatio, both normalized
+- followerCount: weight 1 → log-normalized (use log10 of followerCount, then min-max)
+
+--- AWARENESS campaigns ---
+- followerCount: weight 5 → log-normalized
+- viralCoefficient: weight 5 → weighted average of normalized avgRetweets (0.4), rtToLikeRatio (0.3), quoteTweetRatio (0.3)
+- audienceGeoMatch: weight 4
+- cryptoCredibility: weight 4
+- verticalMatch: weight 3
+- postingFrequency: weight 3 → avgPostsPerDay normalized
+- engagementRate: weight 3
+- shillFatigue: weight 3 → INVERSE: score = 1 - (shillFrequency normalized). Lower shill frequency = higher score
+- authenticity: weight 2
+- audienceLangMatch: weight 2
+
+--- COMMUNITY campaigns ---
+- replyQuality: weight 5
+- followerCryptoRelevance: weight 5 → followerCryptoPct normalized
+- audienceGeoMatch: weight 4
+- cryptoCredibility: weight 4 → combine twitterScoreValue and vcFollowerCount (normalized, averaged)
+- verticalMatch: weight 4
+- threadDepth: weight 3
+- originalContentRatio: weight 3 → originalVsRtRatio normalized
+- authenticity: weight 3
+- engagementConsistency: weight 2 → engagementConsistency normalized (moderate CV ~0.7-1.0 scores highest, very low or very high scores lower)
+- followerCount: weight 1
+
+NORMALIZATION RULES:
+- For min-max normalization: calculate min and max across ALL KOLs in database for that field. score = (value - min) / (max - min). Handle division by zero (if all same value, score = 0.5).
+- For fields that are null/undefined: use score = 0.5 (neutral) and multiply the weight by 0.5 (half confidence)
+- Final formula: matchScore = (SUM of score × weight) / (SUM of weights) × 100
+- Store each dimension score in matchBreakdown jsonb column so we can show transparency to the client
+
+STEP 2 — PRICING ENGINE:
+
+Create file: artifacts/hypeengine/lib/matching/pricing.ts
+
+Function: calculateKolPrice(kolProfileId, campaignId): Promise<PriceCalculation>
+
+The pricing formula:
+1. BASE PRICE: campaign's maxPricePerPost as ceiling
+2. FOLLOWER TIER MULTIPLIER:
+   - <5K followers: 0.4x
+   - 5K-25K: 0.6x
+   - 25K-100K: 0.8x
+   - 100K-500K: 1.0x
+   - 500K+: 1.2x
+3. PERFORMANCE MULTIPLIER:
+   - 0 completed campaigns: 0.7x (probationary rate)
+   - 1-2 campaigns: 0.5 + (avg deliveryScore / 100 × 0.5)
+   - 3+ campaigns: 0.3 + (avg deliveryScore / 100 × 1.0), cap at 1.3x
+4. MATCH SCORE MODIFIER: 0.7 + (matchScore / 100 × 0.3)
+5. FINAL: price = base × followerTier × performance × matchModifier, rounded to integer
+
+Return: { finalPrice, breakdown: { base, followerTier, performanceMultiplier, matchModifier }, kolHistory: { campaignsCompleted, avgDeliveryScore, avgCpa } }
+
+STEP 3 — API ENDPOINTS:
+
+Create these new API routes:
+
+GET /api/campaigns/[id]/matches
+→ Returns ranked KOL matches for this campaign from campaign_kol_matches joined with kol_profiles and users
+→ Include: KOL name, handle, followers, niches, country, matchScore, matchBreakdown, status, calculated price
+→ Only allow the campaign's owner (clientId) to access
+
+POST /api/campaigns/[id]/matches/generate
+→ Calls matchKolsToCampaign(campaignId)
+→ Deletes existing "recommended" matches (keeps "booked"/"active"/"completed")
+→ Inserts new top 50 matches
+→ Returns results
+
+PATCH /api/campaigns/[id]/matches/[matchId]
+→ Update match status (e.g., "recommended" to "booked")
+→ Only campaign owner can do this
+
+STEP 4 — AUTO-TRIGGER MATCHING:
+
+Modify POST /api/campaigns/[id]/launch:
+→ After setting status to "active", automatically call matchKolsToCampaign to generate initial recommendations
+
+STEP 5 — CLIENT-FACING UI:
+
+5a. Campaign detail page (enhance existing page):
+→ Add a "Recommended KOLs" section below existing campaign metrics
+→ Show ranked list of matched KOLs with:
+  - KOL name + Twitter handle (clickable)
+  - Follower count
+  - Niches as tags
+  - Country + language
+  - Match score as percentage with colored bar (green >75, yellow 50-75, red <50)
+  - Calculated price per post
+  - Match breakdown tooltip showing top 3 dimensions (e.g., "Geo: 92%, Vertical: 85%, Engagement: 71%")
+  - "Book KOL" button → changes status to "booked", generates tracking link + personalized tweet (this will be implemented in Prompt 6, for now just change status)
+→ "Refresh Matches" button calling POST /api/campaigns/[id]/matches/generate
+→ Match existing dark-themed card layout
+
+5b. KOL profile modal/page (new):
+→ Triggered when client clicks a KOL name in recommendations
+→ Shows: name, handle, bio, country, language, followers
+→ Niches as tags
+→ Engagement stats: engagement rate, avg likes, avg retweets, avg replies
+→ Authenticity score (percentage with color)
+→ TwitterScore crypto credibility
+→ Content vertical breakdown (percentage bars)
+→ Audience geo estimate (replyLangDist breakdown)
+→ Price breakdown (from calculateKolPrice)
+→ Past campaign performance if any: campaigns completed, avg satisfaction, avg delivery score
+
+STEP 6 — UPDATE KOL CAMPAIGN LIST SORTING:
+
+Update /kol/campaigns page:
+→ For each active campaign, calculate how well THIS KOL matches it using the same scoring algorithm
+→ Sort campaigns by match score descending
+→ Show match percentage next to each campaign card

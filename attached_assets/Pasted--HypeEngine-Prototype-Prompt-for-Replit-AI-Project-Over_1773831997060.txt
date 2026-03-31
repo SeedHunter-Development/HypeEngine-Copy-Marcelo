@@ -1,0 +1,395 @@
+🚀 HypeEngine Prototype Prompt (for Replit AI) 
+
+🧠 Project Overview 
+
+Build a mobile-first web app prototype called HypeEngine. 
+
+HypeEngine connects: 
+
+Crypto Projects (Clients) → create campaigns using credits 
+
+KOLs (Influencers) → browse campaigns and post on X (Twitter) to earn credits 
+
+The system should feel like a simplified version of Google Ads, but for Twitter/X influencer campaigns. 
+
+Focus on: 
+
+Clean UX 
+
+Fast onboarding 
+
+Minimal friction 
+
+Modern UI (2025 SaaS style) 
+
+ 
+
+🎨 Design Requirements 
+
+Mobile-first (primary), responsive for desktop 
+
+Modern SaaS style: 
+
+Soft gradients 
+
+Rounded cards 
+
+Clean typography 
+
+Subtle animations 
+
+Use a component-based layout 
+
+Suggested stack: Next.js  
+
+Light mode default 
+
+ 
+
+🧩 App Structure 
+
+1. Authentication (Shared) 
+
+Login / Signup 
+
+Role selection: 
+
+“I am a Crypto Project” 
+
+“I am a KOL” 
+
+ 
+
+🟦 CLIENT (CRYPTO PROJECT) FLOW 
+
+2. Account Setup 
+
+Fields: 
+
+Email 
+
+Password 
+
+Full Name 
+
+Company Name 
+
+Title 
+
+Twitter Account 
+
+Website 
+
+Wallet Connect (mock button) 
+
+👉 UX Goal: Complete setup in under 1 minute 
+
+ 
+
+3. Dashboard (Landing Screen) 
+
+Show: 
+
+Credit balance 
+
+“Quick Campaign Launch” (MAIN FEATURE) 
+
+Active campaigns summary 
+
+ 
+
+4. Quick Campaign Launch (Core Feature) 
+
+Card-style module with: 
+
+Fields: 
+
+Campaign Title 
+
+Description 
+
+Campaign Image (upload) 
+
+Campaign Hashtag (mandatory) 
+
+Auto-suggest: #HE_<campaign> 
+
+Post Template: 
+
+Text 
+
+Hashtags 
+
+Total Credits (budget input) 
+
+Estimated reach (mock calculation) 
+
+CTA: 
+👉 “Launch Campaign” 
+
+ 
+
+5. Service Agreement (Popup) 
+
+Modal with pre-written agreement 
+
+Checkbox: “I agree to Service Agreement” (Popup) 
+
+2nd Checkbox “I agree to Terms of Service” (Link) 
+
+Button: “Confirm & Launch” 
+
+ 
+
+6. My Campaigns 
+
+List view: 
+
+Campaign name 
+
+Status (Active / Completed) 
+
+Credits used / remaining 
+
+Click → Campaign Details: 
+
+Template preview 
+
+Budget tracking 
+
+Engagement metrics: 
+
+Views 
+
+Likes 
+
+Replies 
+
+Reposts 
+
+ 
+
+7. Credit Management 
+
+Add credits (mock payment) 
+
+Show balance 
+
+Transaction history 
+
+ 
+
+🟪 KOL (INFLUENCER) FLOW 
+
+8. Account Setup 
+
+Fields: 
+
+Email 
+
+Password 
+
+Full Name 
+
+Twitter Account 
+
+ 
+
+9. Agreement Step 
+
+Checkbox “I agree to Terms of Service” (Link) 
+
+“Accept & Continue” 
+
+ 
+
+10. Dashboard (Main Screen) 
+
+Show: 
+
+All Active campaigns (card list), show the almost completed campaigns first 
+
+Each campaign card shows: 
+
+Title 
+
+Reward per post(Based on the KOLs calculated value) 
+
+Short description 
+
+“View Campaign” 
+
+ 
+
+11. Campaign Details 
+
+Show: 
+
+Campaign template (text + image) 
+
+Required hashtag (highlighted) 
+
+Reward amount 
+
+CTA: 
+👉 “Post Now” (For this version will be a copy template, so they can copy paste the post” 
+
+ 
+
+12. Post Now Flow 
+
+Simulated Twitter/X integration: 
+
+Pre-filled text preview 
+
+Button: 
+👉 “Post to X” 
+
+After click: 
+→ Show success state: 
+
+“Post submitted” 
+
+Credits earned (e.g. $50) 
+
+ 
+
+13. Posting Rules 
+
+Limit: 1 post per campaign per day 
+
+Show warning if exceeded 
+
+ 
+
+14. My Campaigns (KOL) 
+
+Participated campaigns 
+
+Earnings per campaign 
+
+ 
+
+15. Proof of Delivery 
+
+List of detected posts (mock) 
+
+Metrics: 
+
+Views 
+
+Likes 
+
+Engagement 
+
+ 
+
+16. Claim Posts 
+
+Form: 
+
+Paste tweet link 
+
+Submit for review 
+
+ 
+
+17. Credit Withdrawal 
+
+Show balance 
+
+“Withdraw” button (mock) 
+
+Payment methods (simple dropdown) 
+
+ 
+
+🔧 Backend (Mocked for Prototype) 
+
+Use mock JSON or local state 
+
+No real API required 
+
+Simulate: 
+
+Campaigns 
+
+Users 
+
+Credits 
+
+Posts 
+
+ 
+
+🧱 Component Structure 
+
+Create reusable components: 
+
+Navbar 
+
+Bottom mobile navigation 
+
+Campaign Card 
+
+Credit Card 
+
+Modal (Agreement) 
+
+Form Inputs 
+
+Stats widgets 
+
+ 
+
+📱 Navigation (Mobile) 
+
+Bottom nav: 
+
+Home 
+
+Campaigns 
+
+Credits 
+
+Profile 
+
+ 
+
+✨ Extra UX Enhancements 
+
+Progress bars for campaign budget usage 
+
+Badge: “Trending Campaign” 
+
+Smooth transitions 
+
+Toast notifications: 
+
+Campaign launched 
+
+Post successful 
+
+ 
+
+🚫 Out of Scope (for Prototype) 
+
+Real Twitter API integration 
+
+Real payments 
+
+Blockchain logic 
+
+Backend tracking 
+
+ 
+
+🎯 Final Goal 
+
+Deliver a clickable, polished prototype that: 
+
+Demonstrates the full flow for both users 
+
+Feels like a real SaaS product 
+
+Could be shown to investors or early users 

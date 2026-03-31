@@ -1,0 +1,125 @@
+PROMPT 3 OF 6: External data ingestion (Apify + TwitterScore + LLM)
+CONTEXT:
+I have a Next.js 15 + Express.js app called HypeEngine with PostgreSQL + Drizzle ORM. The kol_profiles table has 43+ fields but most are currently empty/null — seeded with basic data (handle, followers, niches) but enriched fields (engagement, content verticals, audience composition, crypto credibility) have no real data.
+
+I need a data pipeline that fills these fields from 3 external sources:
+1. Apify (Twitter scraping) — tweets, replies, follower samples
+2. TwitterScore API — crypto-native scoring
+3. LLM (OpenAI, already configured) — content classification
+
+Existing environment variables:
+- DATABASE_URL, AI_INTEGRATIONS_OPENAI_API_KEY, AI_INTEGRATIONS_OPENAI_BASE_URL
+
+Variables I WILL ADD after this prompt:
+- APIFY_API_TOKEN
+- TWITTERSCORE_API_KEY
+
+TASK: Build the data ingestion pipeline.
+
+STEP 1 — APIFY INTEGRATION:
+
+Create file: artifacts/hypeengine/lib/data-pipeline/apify.ts
+
+Function: enrichKolFromApify(twitterHandle: string): Promise<ApifyData>
+
+Call Apify Twitter Scraper API to:
+a) Scrape last 200 tweets (content, likes, retweets, replies, quotes, date, is_retweet flag)
+b) Scrape top 20 replies on last 10 tweets (reply text)
+c) Scrape 300 follower profiles (bios, locations, follower counts, tweet counts, usernames)
+
+Use Apify API: base URL https://api.apify.com/v2, use "apidojo/tweet-scraper" actor or equivalent, Bearer token from APIFY_API_TOKEN.
+
+From scraped data, COMPUTE locally:
+- twitterFollowers, twitterFollowing: from profile
+- avgPostsPerDay: tweets in date range / days
+- avgLikes: mean likes on non-RT tweets
+- avgRetweets: mean retweets
+- avgReplies: mean replies
+- engagementRate: (avgLikes + avgRetweets + avgReplies) / twitterFollowers
+- rtToLikeRatio: avgRetweets / avgLikes
+- quoteTweetRatio: quote tweets / total
+- originalVsRtRatio: original tweets / total
+- threadFrequency: self-reply tweets / total
+- engagementConsistency: stddev(likes) / mean(likes)
+- followerSampleGeo: parse locations from 300 bios → country percentages
+- followerSampleFlag: for each follower, score bot signals (no avatar +1, no bio +1, random username +1, <5 tweets +1, following/follower >10 +1), average across all
+
+IMPORTANT: If APIFY_API_TOKEN not set, return null and log warning. Never crash.
+
+STEP 2 — TWITTERSCORE INTEGRATION:
+
+Create file: artifacts/hypeengine/lib/data-pipeline/twitterscore.ts
+
+Function: enrichKolFromTwitterScore(twitterHandle: string): Promise<TwitterScoreData>
+
+Call TwitterScore API (base URL https://api.twitterscore.io, key from TWITTERSCORE_API_KEY).
+
+Extract:
+- twitterScoreValue: main score
+- notableFollowers: array with type (VC/exchange/project/influencer)
+- vcFollowerCount: count of VC followers
+- exchangeFollowerCount: count of exchange followers
+- followerGrowthTrend: from historical data — "spiking" if 30d growth > 2x avg, "declining" if negative, else "steady"
+
+Same graceful fallback if API key missing.
+
+STEP 3 — LLM CLASSIFICATION:
+
+Create file: artifacts/hypeengine/lib/data-pipeline/llm-classify.ts
+
+Function: classifyKolContent(tweets, replies, followerBios): Promise<LLMClassification>
+
+Three OpenAI calls:
+
+CALL 1 — Content classification (from 100 tweets):
+Prompt asks for JSON: { contentVerticals: {}, primaryLanguage, secondaryLanguages, shillFrequency, projectMentions }
+
+CALL 2 — Reply quality (from 200 replies):
+Prompt asks for JSON: { replyQualityScore: 0-100, breakdown: {substantive, generic, spam, bot} }
+
+CALL 3 — Follower crypto relevance (from 300 bios):
+Prompt asks for JSON: { followerCryptoPct: 0-1 }
+
+Parse each response with try/catch. Return null fields on failure.
+
+STEP 4 — REPLY LANGUAGE DETECTION:
+
+Create file: artifacts/hypeengine/lib/data-pipeline/language-detect.ts
+
+Function: detectReplyLanguages(replies: string[]): Record<string, number>
+
+Use a lightweight npm language detection library (franc or similar — NOT an LLM).
+Run detection on each reply, aggregate into distribution: {"zh": 0.7, "en": 0.2}
+
+STEP 5 — ORCHESTRATOR:
+
+Create file: artifacts/hypeengine/lib/data-pipeline/enrich.ts
+
+Function: enrichKolProfile(kolProfileId: string): Promise<void>
+1. Load kol_profile → get twitterHandle
+2. Call enrichKolFromApify → raw scraped data
+3. Call enrichKolFromTwitterScore → crypto credibility
+4. Call classifyKolContent(tweets, replies, bios) → LLM classifications
+5. Call detectReplyLanguages(replies) → audience language distribution
+6. Update kol_profiles row with ALL enriched fields
+7. Set lastDataRefresh = now()
+8. Log success/failure per step
+
+Function: enrichAllKolProfiles(): Promise<void>
+- Runs enrichKolProfile for each KOL sequentially (not parallel)
+- 2-second delay between each to respect rate limits
+- Log progress: "Enriching KOL 14/500: @DeFiDave..."
+
+STEP 6 — API ENDPOINTS:
+
+POST /api/admin/enrich
+→ Body: { kolProfileId?: string }
+→ If ID provided, enrich one KOL. If not, enrich all.
+→ Return { success, enriched, failed, errors }
+
+GET /api/admin/enrich/status
+→ Return lastDataRefresh for all KOLs
+
+STEP 7 — MANUAL ENRICHMENT BUTTON:
+
+On the KOL profile modal/page (from Prompt 2), add a "Refresh Data" button that calls POST /api/admin/enrich with that KOL's profileId. Reload data after completion.

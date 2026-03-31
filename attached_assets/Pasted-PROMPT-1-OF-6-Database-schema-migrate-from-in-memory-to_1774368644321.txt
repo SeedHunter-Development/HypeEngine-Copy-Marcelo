@@ -1,0 +1,258 @@
+PROMPT 1 OF 6: Database schema + migrate from in-memory to PostgreSQL
+CONTEXT:
+I have a Next.js 15 + Express.js monorepo app called HypeEngine. Currently ALL data lives in an in-memory global store (global._heStore in artifacts/hypeengine/lib/serverStore.ts with mock data from mockData.ts). I have PostgreSQL provisioned (DATABASE_URL env var exists) and Drizzle ORM set up in lib/db/, but the schema file at lib/db/src/schema/index.ts is EMPTY — it exports nothing. Authentication is plain-text passwords stored in the in-memory array. I need to migrate everything to a real database with a proper schema.
+
+IMPORTANT CONSTRAINTS:
+- DO NOT change any UI styling, layout, colors, animations, or Tailwind classes
+- DO NOT change any page routing or navigation structure
+- DO NOT remove any existing features or pages
+- ONLY change the data layer (where data is stored and retrieved)
+- Keep the AuthContext and all existing React context providers working exactly as they do now
+
+TASK: Create the full database schema in lib/db/src/schema/index.ts using Drizzle ORM with the pg driver, then update all API routes to use the database instead of the in-memory store.
+
+CREATE THESE TABLES:
+
+TABLE 1 — "users":
+- id: uuid, primary key, defaultRandom()
+- email: text, unique, not null
+- password: text, not null (HASH with bcrypt — stop storing plain text)
+- role: text, not null ("client" or "kol")
+- name: text
+- bio: text
+- country: text
+- language: text
+- companyName: text (for clients)
+- jobTitle: text (for clients)
+- websiteUrl: text (for clients)
+- credits: integer, default 0
+- setupComplete: boolean, default false
+- agreedToTerms: boolean, default false
+- walletConnected: boolean, default false
+- createdAt: timestamp, defaultNow()
+- updatedAt: timestamp, defaultNow()
+
+TABLE 2 — "kol_profiles" (one-to-one with users where role = "kol"):
+- id: uuid, primary key, defaultRandom()
+- userId: uuid, references users.id, unique, not null
+- twitterHandle: text, unique, not null
+- twitterFollowers: integer, default 0
+- twitterFollowing: integer, default 0
+- niches: text array
+- primaryLanguage: text
+- secondaryLanguages: text array
+- contentVerticals: jsonb — e.g. {"DeFi": 0.7, "L1": 0.2, "Trading": 0.1}
+- verticalWeights: jsonb
+- avgPostsPerDay: real
+- originalVsRtRatio: real
+- threadFrequency: real
+- shillFrequency: real
+- projectMentions: text array
+- avgLikes: real
+- avgRetweets: real
+- avgReplies: real
+- engagementRate: real
+- rtToLikeRatio: real
+- engagementConsistency: real
+- quoteTweetRatio: real
+- replyLangDist: jsonb — e.g. {"zh": 0.7, "en": 0.2, "tr": 0.1}
+- followerSampleGeo: jsonb — e.g. {"CN": 0.6, "US": 0.2}
+- followerCryptoPct: real
+- replyQualityScore: real (0-100)
+- twitterScoreValue: real (from TwitterScore API)
+- notableFollowers: jsonb — array of {name, type, handle}
+- vcFollowerCount: integer, default 0
+- exchangeFollowerCount: integer, default 0
+- followerGrowthTrend: text — "steady", "spiking", "declining", or "new"
+- authenticityScore: real (0-100, composite bot detection)
+- engRateFlag: real
+- consistencyFlag: real
+- replyQualityFlag: real
+- followerSampleFlag: real
+- campaignsCompleted: integer, default 0
+- avgCpaByGoal: jsonb — e.g. {"conversion": 2.5, "awareness": 0.8}
+- convRateByVertical: jsonb
+- clientSatisfaction: real
+- priceCompetitiveness: real
+- lastDataRefresh: timestamp
+- createdAt: timestamp, defaultNow()
+- updatedAt: timestamp, defaultNow()
+
+TABLE 3 — "campaigns":
+- id: uuid, primary key, defaultRandom()
+- clientId: uuid, references users.id, not null
+- title: text, not null
+- description: text
+- imageUrl: text
+- hashtag: text
+- postTemplates: text array
+- credits: integer, not null (total budget)
+- maxPricePerPost: integer
+- maxPostsPerKolPerDay: integer
+- maxPostsPerKolTotal: integer
+- targetNiches: text array
+- targetCountry: text
+- targetLanguage: text
+- campaignGoal: text, not null — "conversion", "awareness", or "community"
+- landingPageUrl: text (where KOL traffic should go — required when goal is "conversion")
+- ctaText: text (call-to-action text like "Sign up here" — required when goal is "conversion")
+- ctaPlacement: text, default "end_of_tweet" — "end_of_tweet" or "replace_in_template"
+- aiPersonalization: boolean, default true
+- status: text, default "draft" — "draft", "active", "paused", "completed"
+- usedCredits: integer, default 0
+- createdAt: timestamp, defaultNow()
+- updatedAt: timestamp, defaultNow()
+
+TABLE 4 — "campaign_kol_matches":
+- id: uuid, primary key, defaultRandom()
+- campaignId: uuid, references campaigns.id, not null
+- kolProfileId: uuid, references kol_profiles.id, not null
+- matchScore: real (0-100)
+- matchBreakdown: jsonb — individual dimension scores for transparency
+- status: text, default "recommended" — "recommended", "booked", "active", "completed", "rejected"
+- priceAgreed: integer
+- generatedTweetText: text (AI-personalized tweet with tracking link embedded)
+- originalTemplate: text (the template before AI personalization)
+- customTweetText: text (if KOL edits the generated tweet)
+- trackingLinkVerified: boolean, default false
+- createdAt: timestamp, defaultNow()
+
+TABLE 5 — "posts":
+- id: uuid, primary key, defaultRandom()
+- campaignId: uuid, references campaigns.id, not null
+- kolProfileId: uuid, references kol_profiles.id, not null
+- matchId: uuid, references campaign_kol_matches.id
+- tweetUrl: text
+- tweetText: text
+- status: text, default "pending" — "pending", "approved", "rejected", "paid"
+- creditsEarned: integer, default 0
+- trackingLinkPresent: boolean, default false
+- trackingLinkId: uuid, references tracking_links.id (optional)
+- createdAt: timestamp, defaultNow()
+
+TABLE 6 — "transactions":
+- id: uuid, primary key, defaultRandom()
+- userId: uuid, references users.id, not null
+- type: text, not null — "deposit", "spend", "earn", "withdraw"
+- amount: integer, not null
+- description: text
+- campaignId: uuid, references campaigns.id (optional)
+- createdAt: timestamp, defaultNow()
+
+TABLE 7 — "tracking_links":
+- id: uuid, primary key, defaultRandom()
+- campaignId: uuid, references campaigns.id, not null
+- kolProfileId: uuid, references kol_profiles.id, not null
+- matchId: uuid, references campaign_kol_matches.id
+- refCode: text, unique, not null (short unique code like "he_a7x9k2")
+- destinationUrl: text, not null
+- createdAt: timestamp, defaultNow()
+
+TABLE 8 — "tracking_clicks":
+- id: uuid, primary key, defaultRandom()
+- trackingLinkId: uuid, references tracking_links.id, not null
+- kolProfileId: uuid, references kol_profiles.id, not null
+- campaignId: uuid, references campaigns.id, not null
+- ipHash: text (hashed IP — never store raw IPs)
+- userAgent: text
+- referer: text
+- timestamp: timestamp, defaultNow()
+
+TABLE 9 — "tracking_conversions":
+- id: uuid, primary key, defaultRandom()
+- trackingLinkId: uuid, references tracking_links.id
+- kolProfileId: uuid, references kol_profiles.id, not null
+- campaignId: uuid, references campaigns.id, not null
+- eventType: text, not null — "signup", "deposit", "trade", "install", "custom"
+- eventValue: real (optional — e.g. deposit amount)
+- metadata: jsonb (optional)
+- source: text, not null, default "pixel"
+- timestamp: timestamp, defaultNow()
+
+TABLE 10 — "campaign_results":
+- id: uuid, primary key, defaultRandom()
+- campaignId: uuid, references campaigns.id, not null, unique
+- totalClicks: integer, default 0
+- uniqueClicks: integer, default 0
+- totalConversions: integer, default 0
+- totalConversionValue: real, default 0
+- avgCpa: real
+- avgCtr: real
+- overallDeliveryScore: real (0-100)
+- completedAt: timestamp
+- createdAt: timestamp, defaultNow()
+- updatedAt: timestamp, defaultNow()
+
+TABLE 11 — "kol_campaign_scores":
+- id: uuid, primary key, defaultRandom()
+- campaignId: uuid, references campaigns.id, not null
+- kolProfileId: uuid, references kol_profiles.id, not null
+- matchId: uuid, references campaign_kol_matches.id
+- clicks: integer, default 0
+- uniqueClicks: integer, default 0
+- conversions: integer, default 0
+- conversionValue: real, default 0
+- tweetUrl: text
+- tweetLikes: integer
+- tweetRetweets: integer
+- tweetReplies: integer
+- tweetViews: integer
+- tweetReplyQuality: real (0-100)
+- contentComplianceScore: real (0-100)
+- engagementDeliveryScore: real (0-1)
+- clickThroughRate: real
+- conversionRate: real
+- costPerAcquisition: real
+- clientRating: real (1-5)
+- clientFeedback: text
+- deliveryScore: real (0-100)
+- createdAt: timestamp, defaultNow()
+- updatedAt: timestamp, defaultNow()
+
+TABLE 12 — "kol_follower_snapshots":
+- id: uuid, primary key, defaultRandom()
+- kolProfileId: uuid, references kol_profiles.id, not null
+- followerCount: integer, not null
+- snapshotDate: date, not null
+- createdAt: timestamp, defaultNow()
+- Unique constraint on (kolProfileId, snapshotDate)
+
+AFTER CREATING THE SCHEMA:
+
+1. Run `pnpm drizzle-kit push` to create all tables in PostgreSQL.
+
+2. Update ALL Next.js API routes in artifacts/hypeengine/app/api/ to use Drizzle queries instead of the in-memory global._heStore:
+   - POST /api/auth/signup → insert into users (hash password with bcrypt)
+   - POST /api/auth/login → select from users, compare with bcrypt
+   - GET/PATCH /api/auth/role → query/update users table
+   - GET/POST /api/campaigns → query/insert campaigns table
+   - GET/PATCH /api/campaigns/[id] → query/update campaigns table
+   - POST /api/campaigns/[id]/launch → update campaign status to "active"
+   - GET/PATCH /api/users/[id] → query/update users table
+   - GET/POST /api/posts → query/insert posts table
+   - GET/POST /api/credits → query/update users.credits
+   - GET/POST /api/transactions → query/insert transactions table
+   - POST /api/rephrase → keep as-is (OpenAI, no DB change needed)
+
+3. When a KOL completes the /setup flow (submits their Twitter handle, niches, country, language), ALSO create a row in kol_profiles linked to their user ID. Copy niches, country, language into the kol_profiles row. Set twitterFollowers to the simulated value for now (we'll replace with real data in Prompt 3).
+
+4. Add these NEW FIELDS to the campaign creation form in artifacts/hypeengine/app/(client)/campaigns/new/:
+
+   In Step 1 (Campaign Info), add:
+   - "ctaText": text input, label "Call-to-action text", placeholder "e.g. Sign up now, Try it free, Start trading", help text "This text will be hyperlinked in every KOL's tweet". Required when campaignGoal is "conversion". Auto-suggest default based on goal: conversion → "Sign up here", awareness → "Learn more", community → "Join us"
+   - "ctaPlacement": single select, label "Where should the link appear?", options: "End of tweet (recommended)" and "Replace in template — use {link} placeholder". Default: "End of tweet"
+   - "aiPersonalization": toggle, label "AI-personalize tweets for each KOL", help text "Our AI will adapt your templates to match each KOL's writing style", default: true
+
+   In Step 2 (Post Settings), add:
+   - "campaignGoal": single select, label "Campaign goal", options: "User conversion (sign-ups, deposits, swaps)", "Brand awareness (reach, impressions, visibility)", "Community growth (followers, engagement, discussion)". Store the short value ("conversion", "awareness", "community"). Required.
+   - "landingPageUrl": text input, label "Landing page URL — where should KOL traffic go?", placeholder "https://yourproject.com/signup". Required when campaignGoal is "conversion", optional otherwise.
+
+   If ctaPlacement is "Replace in template", show a hint below the postTemplates textarea: "Use {link} where you want the tracking link. Example: 'Just discovered @ProjectX — {link}'"
+   Validate that at least one {link} exists in each template when this mode is selected.
+
+5. After everything works, delete the in-memory store files:
+   - artifacts/hypeengine/lib/serverStore.ts
+   - artifacts/hypeengine/lib/mockData.ts
+   Remove all imports of these files throughout the codebase.
+
+6. Seed the database with 5 sample KOL profiles and 2 sample campaigns for testing. Use realistic crypto KOL data (handles like @DeFiDave, @NFTWhale, etc. — fictional but realistic). Give each KOL different niches, countries, languages, and varying follower counts (5K to 500K range).
